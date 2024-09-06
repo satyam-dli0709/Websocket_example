@@ -1,0 +1,185 @@
+WebSocket springboot
+
+config
+package com.example.logwatcher.config;
+
+import org.springframework.context.annotation.Configuration;
+import org.springframework.messaging.simp.config.MessageBrokerRegistry;
+import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
+import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
+import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
+
+@Configuration
+@EnableWebSocketMessageBroker
+public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
+
+    @Override
+    public void configureMessageBroker(MessageBrokerRegistry config) {
+        config.enableSimpleBroker("/topic");
+        config.setApplicationDestinationPrefixes("/app");
+    }
+
+    @Override
+    public void registerStompEndpoints(StompEndpointRegistry registry) {
+        registry.addEndpoint("/log").withSockJS();
+    }
+}
+
+controller
+
+package com.example.logwatcher.controller;
+
+import com.example.logwatcher.model.LogMessage;
+import com.example.logwatcher.service.LogService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.messaging.handler.annotation.MessageMapping;
+import org.springframework.messaging.handler.annotation.SendTo;
+import org.springframework.stereotype.Controller;
+
+@Controller
+public class LogController {
+
+    @Autowired
+    private LogService logService;
+
+    @MessageMapping("/log")
+    @SendTo("/topic/logs")
+    public LogMessage sendLogUpdate() {
+        return logService.getLatestLogMessage();
+    }
+}
+
+
+service
+
+package com.example.logwatcher.service;
+
+import com.example.logwatcher.model.LogMessage;
+import org.springframework.stereotype.Service;
+
+import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.List;
+
+@Service
+public class LogService {
+
+    private static final String LOG_FILE_PATH = "/path/to/your/logfile.log";
+
+    public LogMessage getLatestLogMessage() {
+        try {
+            List<String> lines = Files.readAllLines(Paths.get(LOG_FILE_PATH));
+            int start = Math.max(0, lines.size() - 10);
+            List<String> last10Lines = lines.subList(start, lines.size());
+            return new LogMessage(String.join("\n", last10Lines));
+        } catch (IOException e) {
+            e.printStackTrace();
+            return new LogMessage("Error reading log file");
+        }
+    }
+
+    public void watchLogFile() {
+        try (RandomAccessFile file = new RandomAccessFile(LOG_FILE_PATH, "r")) {
+            long filePointer = file.length();
+            while (true) {
+                long fileLength = file.length();
+                if (fileLength > filePointer) {
+                    file.seek(filePointer);
+                    String line;
+                    while ((line = file.readLine()) != null) {
+                        // Send the new log line to the clients
+                    }
+                    filePointer = file.getFilePointer();
+                }
+                Thread.sleep(1000);
+            }
+        } catch (IOException | InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+
+model
+
+package com.example.logwatcher.model;
+
+public class LogMessage {
+    private String content;
+
+    public LogMessage(String content) {
+        this.content = content;
+    }
+
+    public String getContent() {
+        return content;
+    }
+
+    public void setContent(String content) {
+        this.content = content;
+    }
+}
+
+
+HTml
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Log Watcher</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.5.1/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+</head>
+<body>
+    <div id="log"></div>
+    <script>
+        var socket = new SockJS('/log');
+        var stompClient = Stomp.over(socket);
+
+        stompClient.connect({}, function(frame) {
+            console.log('Connected: ' + frame);
+            stompClient.subscribe('/topic/logs', function(logMessage) {
+                showLogMessage(JSON.parse(logMessage.body).content);
+            });
+        });
+
+        function showLogMessage(message) {
+            var logDiv = document.getElementById('log');
+            logDiv.innerHTML = message.replace(/\n/g, '<br>');
+        }
+    </script>
+</body>
+</html>
+
+
+
+structure
+
+log-watcher
+├── src
+│   ├── main
+│   │   ├── java
+│   │   │   └── com
+│   │   │       └── example
+│   │   │           └── logwatcher
+│   │   │               ├── LogWatcherApplication.java
+│   │   │               ├── config
+│   │   │               │   └── WebSocketConfig.java
+│   │   │               ├── controller
+│   │   │               │   └── LogController.java
+│   │   │               ├── service
+│   │   │               │   └── LogService.java
+│   │   │               └── model
+│   │   │                   └── LogMessage.java
+│   │   └── resources
+│   │       └── static
+│   │           └── index.html
+│   └── test
+│       └── java
+│           └── com
+│               └── example
+│                   └── logwatcher
+│                       └── LogWatcherApplicationTests.java
+└── pom.xml
